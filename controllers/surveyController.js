@@ -4,7 +4,6 @@ const { evaluarRiesgoEvacuacion } = require('../Servicios/relevamientoServicio')
 const crearRegistro = async (req, res) => {
     try {
         const datos = req.body;
-        // Evaluar riesgo usando el servicio
         datos.estadoEvacuacion = evaluarRiesgoEvacuacion(datos.nivelRioParana);
         
         const nuevoRelevamiento = new Relevamiento(datos);
@@ -16,4 +15,13 @@ const crearRegistro = async (req, res) => {
     }
 };
 
-module.exports = { crearRegistro };
+const obtenerRegistros = async (req, res) => {
+    try {
+        const relevamientos = await Relevamiento.find().sort({ fechaRegistro: -1 });
+        res.status(200).json(relevamientos);
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error al obtener los datos', error: error.message });
+    }
+};
+
+module.exports = { crearRegistro, obtenerRegistros };

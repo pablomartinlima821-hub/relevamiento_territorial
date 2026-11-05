@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const relevamientoSchema = new mongoose.Schema({
     barrio: { type: String, required: true },
-    nivelRioParana: { type: Number, required: true }, // Nivel en metros
+    nivelRioParana: { type: Number, required: true },
     estadoEvacuacion: { type: Boolean, default: false },
     coordenadas: {
         lat: { type: Number, required: true },
