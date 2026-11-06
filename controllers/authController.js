@@ -1,6 +1,68 @@
 const Usuario = require('../models/Usuario');
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const registrarUsuario = async (req, res) => {
+    try {
+        const nombre = typeof req.body?.nombre === 'string' ? req.body.nombre.trim() : '';
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+        const password = req.body?.password;
+
+        if (!nombre || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 8) {
+            return res.status(400).json({ mensaje: 'Ingresa un nombre, un correo válido y una contraseña de al menos 8 caracteres.' });
+        }
+
+        const usuarioExistente = await Usuario.findOne({ email });
+        if (usuarioExistente) {
+            return res.status(409).json({ mensaje: 'Ya existe una cuenta registrada con ese correo.' });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 10);
+        const usuario = new Usuario({ nombre, email, password: passwordHash });
+        await usuario.save();
+
+        return res.status(201).json({
+            mensaje: 'Cuenta creada con éxito.',
+            usuario: { nombre: usuario.nombre, email: usuario.email, rol: usuario.rol }
+        });
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({ mensaje: 'Ya existe una cuenta registrada con ese correo.' });
+        }
+        return res.status(500).json({ mensaje: 'Error al registrar el usuario.', error: error.message });
+    }
+};
+
+const iniciarSesion = async (req, res) => {
+    try {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+        const password = req.body?.password;
+
+        if (!email || typeof password !== 'string' || !password) {
+            return res.status(400).json({ mensaje: 'Ingresa tu correo electrónico y contraseña.' });
+        }
+
+        const usuario = await Usuario.findOne({ email }).select('+password');
+        if (!usuario?.password || !(await bcrypt.compare(password, usuario.password))) {
+            return res.status(401).json({ mensaje: 'Correo o contraseña incorrectos.' });
+        }
+
+        const token = jwt.sign(
+            { id: usuario._id, email: usuario.email, rol: usuario.rol },
+            process.env.JWT_SECRET || 'secreto_super_seguro',
+            { expiresIn: '8h' }
+        );
+
+        return res.status(200).json({
+            mensaje: 'Inicio de sesión exitoso.',
+            token,
+            usuario: { nombre: usuario.nombre, email: usuario.email, rol: usuario.rol }
+        });
+    } catch (error) {
+        return res.status(500).json({ mensaje: 'Error al iniciar sesión.', error: error.message });
+    }
+};
 
 // Configuración del transporter de correo (Gmail)
 const transporter = nodemailer.createTransport({
@@ -75,4 +137,29 @@ const verificarTokenGmail = async (req, res) => {
     }
 };
 
-module.exports = { solicitarTokenGmail, verificarTokenGmail };
+const restablecerPassword = async (req, res) => {
+    try {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+        const codigo = req.body?.token;
+        const newPassword = req.body?.newPassword;
+        const usuario = await Usuario.findOne({ email });
+
+        if (!usuario || usuario.tokenAcceso !== codigo || !usuario.tokenExpiracion || usuario.tokenExpiracion < Date.now()) {
+            return res.status(400).json({ mensaje: 'Código inválido o expirado.' });
+        }
+        if (typeof newPassword !== 'string' || newPassword.length < 8) {
+            return res.status(400).json({ mensaje: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+        }
+
+        usuario.password = await bcrypt.hash(newPassword, 10);
+        usuario.tokenAcceso = undefined;
+        usuario.tokenExpiracion = undefined;
+        await usuario.save();
+
+        return res.status(200).json({ mensaje: 'Contraseña actualizada con éxito.' });
+    } catch (error) {
+        return res.status(500).json({ mensaje: 'Error al restablecer la contraseña.', error: error.message });
+    }
+};
+
+module.exports = { iniciarSesion, registrarUsuario, restablecerPassword, solicitarTokenGmail, verificarTokenGmail };

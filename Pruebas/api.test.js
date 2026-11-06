@@ -15,4 +15,20 @@ describe('Pruebas de la API de Relevamiento', () => {
         expect(Array.isArray(res.body)).toBeTruthy();
     });
 
+    it('El login debe validar los datos antes de consultar usuarios', async () => {
+        const res = await request(app).post('/api/auth/login').send({});
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.mensaje).toBe('Ingresa tu correo electrónico y contraseña.');
+    });
+
+    it('El registro debe exigir una contraseña segura', async () => {
+        const res = await request(app).post('/api/auth/registrar').send({
+            nombre: 'Usuario',
+            email: 'usuario@example.com',
+            password: 'corta'
+        });
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.mensaje).toMatch(/al menos 8 caracteres/);
+    });
+
 });
