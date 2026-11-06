@@ -152,4 +152,49 @@ const exportarCsv = async (req, res) => {
     }
 };
 
-module.exports = { crearRegistro, exportarCsv, obtenerRegistros, obtenerResumen };
+// NUEVA FUNCIÓN PARA ACTUALIZAR REGISTROS
+const actualizarRegistro = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const nivelRioParana = req.body.nivelRioParana !== undefined ? Number(req.body.nivelRioParana) : undefined;
+
+        const datosActualizados = {
+            ...(req.body.barrio && { barrio: req.body.barrio.trim() }),
+            ...(nivelRioParana !== undefined && {
+                nivelRioParana,
+                estadoEvacuacion: evaluarRiesgoEvacuacion(nivelRioParana)
+            }),
+            ...(req.body.coordenadas && {
+                coordenadas: {
+                    lat: Number(req.body.coordenadas.lat),
+                    lng: Number(req.body.coordenadas.lng)
+                }
+            }),
+            ...(req.body.personasAfectadas !== undefined && { personasAfectadas: Number(req.body.personasAfectadas) }),
+            ...(typeof req.body.necesidades === 'string' && { necesidades: req.body.necesidades.trim() }),
+            ...(typeof req.body.observaciones === 'string' && { observaciones: req.body.observaciones.trim() })
+        };
+
+        const registroActualizado = await Relevamiento.findByIdAndUpdate(
+            id,
+            datosActualizados,
+            { new: true, runValidators: true }
+        );
+
+        if (!registroActualizado) {
+            return res.status(404).json({ mensaje: 'Registro de relevamiento no encontrado.' });
+        }
+
+        return res.status(200).json({ mensaje: 'Relevamiento actualizado exitosamente.', data: registroActualizado });
+    } catch (error) {
+        return res.status(500).json({ mensaje: 'Error al actualizar el relevamiento.', error: error.message });
+    }
+};
+
+module.exports = { 
+    crearRegistro, 
+    exportarCsv, 
+    obtenerRegistros, 
+    obtenerResumen, 
+    actualizarRegistro 
+};
