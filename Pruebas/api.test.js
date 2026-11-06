@@ -15,6 +15,13 @@ describe('Pruebas de la API de Relevamiento', () => {
         expect(res.statusCode).toEqual(200);
         expect(res.text).toContain('id="map"');
         expect(res.text).toContain('tile.openstreetmap.org');
+        expect(res.text).toContain('<link rel="stylesheet" href="/frontend.css">');
+    });
+
+    it('La hoja de estilos visuales se sirve por HTTP', async () => {
+        const res = await request(app).get('/frontend.css');
+        expect(res.statusCode).toEqual(200);
+        expect(res.text).toContain('#dashboard-container');
     });
 
     it('CORS permite la preflight del login desde el navegador', async () => {
