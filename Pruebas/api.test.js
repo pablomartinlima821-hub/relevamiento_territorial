@@ -58,6 +58,44 @@ describe('Pruebas de la API de Relevamiento', () => {
         expect(res.statusCode).toEqual(403);
     });
 
+    it('La consulta de barrios requiere una sesión válida', async () => {
+        const res = await request(app).get('/api/barrios');
+        expect(res.statusCode).toEqual(401);
+    });
+
+    it('La edición de barrios requiere rol de administrador', async () => {
+        const token = jwt.sign(
+            { id: '507f1f77bcf86cd799439011', email: 'usuario@example.com', rol: 'encuestador' },
+            process.env.JWT_SECRET || 'secreto_super_seguro'
+        );
+        const res = await request(app)
+            .put('/api/barrios/puerto-costanera')
+            .set('Authorization', 'Bearer ' + token)
+            .send({
+                nombre: 'Zona Puerto',
+                ubicacion: 'Costanera',
+                coordenadas: { lat: -29.14, lng: -59.27 }
+            });
+        expect(res.statusCode).toEqual(403);
+    });
+
+    it('La edición de barrios valida los datos antes de guardar', async () => {
+        const token = jwt.sign(
+            { id: '507f1f77bcf86cd799439011', email: 'admin@example.com', rol: 'admin' },
+            process.env.JWT_SECRET || 'secreto_super_seguro'
+        );
+        const res = await request(app)
+            .put('/api/barrios/puerto-costanera')
+            .set('Authorization', 'Bearer ' + token)
+            .send({
+                nombre: '',
+                ubicacion: '',
+                coordenadas: { lat: 0, lng: 0 }
+            });
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.mensaje).toMatch(/coordenadas válidas/);
+    });
+
     it('El registro de relevamiento valida sus datos antes de guardar', async () => {
         const token = jwt.sign(
             { id: '507f1f77bcf86cd799439011', email: 'usuario@example.com' },
