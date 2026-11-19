@@ -1,6 +1,14 @@
+const mongoose = require('mongoose');
 const Usuario = require('../models/Usuario');
 const Relevamiento = require('../models/Relevamiento');
-const { evaluarRiesgoEvacuacion } = require('../Servicios/relevamientoServicio');
+const MedicionRio = require('../../models/MedicionRio');
+const {
+    evaluarRiesgoEvacuacion,
+    UMBRAL_EVACUACION_METROS
+} = require('../Servicios/relevamientoServicio');
+
+const ESTACION_RIO = 'GOYA';
+const ESTADOS_SEGUIMIENTO = ['pendiente', 'en-seguimiento', 'resuelto'];
 
 const crearFiltro = (query) => {
     const filtro = {};
@@ -11,8 +19,8 @@ const crearFiltro = (query) => {
         filtro.barrio = { $regex: terminoSeguro, $options: 'i' };
     }
 
-    if (query.riesgo === 'critico') filtro.estadoEvacuacion = true;
-    if (query.riesgo === 'sin-alerta') filtro.estadoEvacuacion = false;
+    if (query.riesgo === 'critico') filtro.nivelRioParana = { $gte: UMBRAL_EVACUACION_METROS };
+    if (query.riesgo === 'sin-alerta') filtro.nivelRioParana = { $lt: UMBRAL_EVACUACION_METROS };
     if (query.riesgo && !['critico', 'sin-alerta'].includes(query.riesgo)) {
         return { error: 'El filtro de riesgo no es válido.' };
     }
@@ -41,10 +49,29 @@ const crearRegistro = async (req, res) => {
             return res.status(401).json({ mensaje: 'La cuenta asociada a esta sesión ya no existe.' });
         }
 
-        const nivelRioParana = Number(req.body.nivelRioParana);
+        const nivelRioOrigen = req.body.nivelRioOrigen || 'manual';
+        if (!['manual', 'prefectura'].includes(nivelRioOrigen)) {
+            return res.status(400).json({ mensaje: 'El origen del nivel del río no es válido.' });
+        }
+
+        let nivelRioParana = Number(req.body.nivelRioParana);
+        let fechaMedicionRio;
+        if (nivelRioOrigen === 'prefectura') {
+            const medicion = await MedicionRio.findOne({ estacion: ESTACION_RIO })
+                .sort({ fechaMedicion: -1 })
+                .lean();
+            if (!medicion) {
+                return res.status(503).json({ mensaje: 'No hay una medición de Prefectura disponible para usar.' });
+            }
+            nivelRioParana = medicion.alturaMetros;
+            fechaMedicionRio = medicion.fechaMedicion;
+        }
+
         const nuevoRelevamiento = new Relevamiento({
             barrio: req.body.barrio.trim(),
             nivelRioParana,
+            nivelRioOrigen,
+            fechaMedicionRio,
             estadoEvacuacion: evaluarRiesgoEvacuacion(nivelRioParana),
             coordenadas: {
                 lat: Number(req.body.coordenadas.lat),
@@ -72,7 +99,10 @@ const obtenerRegistros = async (req, res) => {
             .sort({ fechaRegistro: -1 })
             .limit(500)
             .lean();
-        return res.status(200).json(relevamientos);
+        return res.status(200).json(relevamientos.map((registro) => ({
+            ...registro,
+            estadoEvacuacion: evaluarRiesgoEvacuacion(registro.nivelRioParana)
+        })));
     } catch (error) {
         return res.status(500).json({ mensaje: 'Error al obtener los relevamientos.', error: error.message });
     }
@@ -89,7 +119,15 @@ const obtenerResumen = async (req, res) => {
                 $group: {
                     _id: null,
                     total: { $sum: 1 },
-                    criticos: { $sum: { $cond: ['$estadoEvacuacion', 1, 0] } },
+                    criticos: {
+                        $sum: {
+                            $cond: [
+                                { $gte: ['$nivelRioParana', UMBRAL_EVACUACION_METROS] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
                     personasAfectadas: { $sum: { $ifNull: ['$personasAfectadas', 0] } }
                 }
             }
@@ -125,7 +163,8 @@ const exportarCsv = async (req, res) => {
             .sort({ fechaRegistro: -1 })
             .lean();
         const encabezados = [
-            'Fecha', 'Barrio', 'Nivel del río (m)', 'Riesgo estimado',
+            'Fecha', 'Barrio', 'Nivel del río (m)', 'Origen del nivel', 'Fecha de medición del río',
+            'Riesgo estimado', 'Estado de seguimiento',
             'Personas afectadas', 'Necesidades', 'Observaciones',
             'Latitud', 'Longitud', 'Registrado por', 'Correo del responsable'
         ];
@@ -133,7 +172,12 @@ const exportarCsv = async (req, res) => {
             registro.fechaRegistro?.toISOString(),
             registro.barrio,
             registro.nivelRioParana,
-            registro.estadoEvacuacion ? 'Requiere atención (umbral del proyecto)' : 'Sin alerta automática',
+            registro.nivelRioOrigen === 'prefectura' ? 'Prefectura' : 'Manual',
+            registro.fechaMedicionRio?.toISOString(),
+            evaluarRiesgoEvacuacion(registro.nivelRioParana)
+                ? `Evacuación según umbral del proyecto (≥ ${UMBRAL_EVACUACION_METROS} m)`
+                : 'Por debajo del umbral de evacuación',
+            registro.estadoSeguimiento || 'pendiente',
             registro.personasAfectadas || 0,
             registro.necesidades,
             registro.observaciones,
@@ -162,7 +206,9 @@ const actualizarRegistro = async (req, res) => {
             ...(req.body.barrio && { barrio: req.body.barrio.trim() }),
             ...(nivelRioParana !== undefined && {
                 nivelRioParana,
-                estadoEvacuacion: evaluarRiesgoEvacuacion(nivelRioParana)
+                estadoEvacuacion: evaluarRiesgoEvacuacion(nivelRioParana),
+                nivelRioOrigen: 'manual',
+                fechaMedicionRio: null
             }),
             ...(req.body.coordenadas && {
                 coordenadas: {
@@ -191,10 +237,48 @@ const actualizarRegistro = async (req, res) => {
     }
 };
 
+const actualizarSeguimiento = async (req, res) => {
+    const { id } = req.params;
+    const estadoSeguimiento = req.body?.estadoSeguimiento;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ mensaje: 'El identificador del relevamiento no es válido.' });
+    }
+    if (!ESTADOS_SEGUIMIENTO.includes(estadoSeguimiento)) {
+        return res.status(400).json({ mensaje: 'El estado de seguimiento no es válido.' });
+    }
+
+    try {
+        const relevamiento = await Relevamiento.findByIdAndUpdate(
+            id,
+            {
+                $set: {
+                    estadoSeguimiento,
+                    seguimientoActualizadoEn: new Date(),
+                    seguimientoActualizadoPor: {
+                        id: req.usuarioAutenticado.id,
+                        email: req.usuarioAutenticado.email
+                    }
+                }
+            },
+            { new: true, runValidators: true }
+        ).lean();
+
+        if (!relevamiento) {
+            return res.status(404).json({ mensaje: 'No se encontró el relevamiento.' });
+        }
+
+        return res.status(200).json({ mensaje: 'Seguimiento actualizado.', data: relevamiento });
+    } catch (error) {
+        return res.status(500).json({ mensaje: 'No se pudo actualizar el seguimiento.', error: error.message });
+    }
+};
+
 module.exports = { 
     crearRegistro, 
     exportarCsv, 
     obtenerRegistros, 
     obtenerResumen, 
-    actualizarRegistro 
+    actualizarRegistro,
+    actualizarSeguimiento
 };

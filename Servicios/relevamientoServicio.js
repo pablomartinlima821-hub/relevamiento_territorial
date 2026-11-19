@@ -1,5 +1,7 @@
+const UMBRAL_EVACUACION_METROS = 7;
+
 const evaluarRiesgoEvacuacion = (nivelRio) => {
-    return nivelRio >= 5.20; 
+    return nivelRio >= UMBRAL_EVACUACION_METROS;
 };
 
-module.exports = { evaluarRiesgoEvacuacion };
+module.exports = { evaluarRiesgoEvacuacion, UMBRAL_EVACUACION_METROS };
